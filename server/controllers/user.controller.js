@@ -1,40 +1,39 @@
-import userModel from "../models/user.model.js";
+import UserModel from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import bcrypt from "bcryptjs";
 import sendEmail from "../config/sendEmail.js";
 import { verifyEmailTemplate } from "../utils/verifyEmailTemplate.js";
+import generateAccessToken from "../utils/generateAccessToken.js";
+import generateRefreshToken from "../utils/generateRefreshToken.js";
+
+// ---------------------- REGISTER ----------------------
 export async function registerUserController(req, res) {
   try {
     const { name, email, password } = req.body;
 
-    // Validate required fields
     if (!name || !email || !password) {
       throw new ApiError(400, "Name, email, and password are required");
     }
 
-    // Check if user already exists
-    const existingUser = await userModel.findOne({ email });
+    const existingUser = await UserModel.findOne({ email });
     if (existingUser) {
       throw new ApiError(409, "User with this email already exists", [
         "Email already in use",
       ]);
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
-    const newUser = await userModel.create({
+    const newUser = await UserModel.create({
       name,
       email,
       password: hashedPassword,
+      isVerified: false,
     });
 
-    // Send verification email
-    const verifyEmailUrl = `${process.env.FRONTEND_URL}/verify-email?email=${email}`;
+    const verifyEmailUrl = `${process.env.FRONTEND_URL}/verify-email?user=${newUser._id}`;
     const emailSent = await sendEmail({
-      to: "rdeol@innow8apps.com",
+      to: email,
       subject: "Verify your email - Binkeyit",
       html: verifyEmailTemplate({ name, url: verifyEmailUrl }),
     });
@@ -43,7 +42,6 @@ export async function registerUserController(req, res) {
       throw new ApiError(500, "Failed to send verification email");
     }
 
-    // Respond with success
     return res.status(201).json({
       message: "User registered successfully. Please verify your email.",
       user: {
@@ -55,7 +53,6 @@ export async function registerUserController(req, res) {
       error: false,
     });
   } catch (error) {
-    // Handle errors consistently
     const apiError =
       error instanceof ApiError
         ? error
@@ -73,19 +70,26 @@ export async function registerUserController(req, res) {
   }
 }
 
+// ---------------------- VERIFY EMAIL ----------------------
 export async function verifyEmailController(req, res) {
   try {
-    const { code } = req.body;
-    const user = await userModel.findOne({ _id: code });
+    const { userId } = req.body; // pass userId or token from frontend
+    const user = await UserModel.findById(userId);
 
     if (!user) {
       throw new ApiError(404, "User not found");
     }
 
-    const updateUser = await userModal.updateOne(
-      { _id: code },
-      { isVerified: true }
-    );
+    if (user.isVerified) {
+      return res.status(200).json({
+        message: "Email already verified",
+        success: true,
+        error: false,
+      });
+    }
+
+    user.isVerified = true;
+    await user.save();
 
     return res.status(200).json({
       message: "Email verified successfully",
@@ -93,7 +97,6 @@ export async function verifyEmailController(req, res) {
       error: false,
     });
   } catch (error) {
-    // Handle errors consistently
     const apiError =
       error instanceof ApiError
         ? error
@@ -111,21 +114,72 @@ export async function verifyEmailController(req, res) {
   }
 }
 
-//Login Controller
+// ---------------------- LOGIN ----------------------
+
 export async function loginController(req, res) {
   try {
     const { email, password } = req.body;
 
-    // Validate required fields
     if (!email || !password) {
       throw new ApiError(400, "Email and password are required");
     }
-  } catch (error) {
-    // return res.status(500).json({
-    //   message: error.message || error,
-    //   error: true,
-    //   success: false,
 
-    throw new ApiError(500, error?.message || error);
+    const user = await UserModel.findOne({ email });
+    if (!user) {
+      throw new ApiError(404, "User not found");
+    }
+
+    if (user.status !== "active") {
+      throw new ApiError(403, "Please contact Admin.");
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      throw new ApiError(401, "Invalid email or password");
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    res.cookiesOption = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "Strict",
+    };
+
+    res.cookie("accessToken", accessToken, res.cookiesOption);
+    res.cookie("refreshToken", refreshToken, res.cookiesOption);
+
+    return res.status(200).json({
+      message: "Login successful",
+      success: true,
+      error: false,
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+        },
+        tokens: {
+          accessToken,
+          refreshToken,
+        },
+      },
+    });
+  } catch (error) {
+    const apiError =
+      error instanceof ApiError
+        ? error
+        : new ApiError(
+            500,
+            error.message || "Something went wrong",
+            error.stack
+          );
+
+    return res.status(apiError.statusCode).json({
+      success: false,
+      message: apiError.message,
+      errors: apiError.errors || null,
+    });
   }
 }
