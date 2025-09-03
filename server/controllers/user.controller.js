@@ -1,185 +1,78 @@
 import UserModel from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
 import bcrypt from "bcryptjs";
 import sendEmail from "../config/sendEmail.js";
 import { verifyEmailTemplate } from "../utils/verifyEmailTemplate.js";
 import generateAccessToken from "../utils/generateAccessToken.js";
 import generateRefreshToken from "../utils/generateRefreshToken.js";
+import jwt from "jsonwebtoken";
 
-// ---------------------- REGISTER ----------------------
-export async function registerUserController(req, res) {
-  try {
-    const { name, email, password } = req.body;
+// REGISTER USER
+export const registerUserController = asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) throw new ApiError(400, "Name, email, and password are required");
 
-    if (!name || !email || !password) {
-      throw new ApiError(400, "Name, email, and password are required");
-    }
+  const existingUser = await UserModel.findOne({ email });
+  if (existingUser) throw new ApiError(409, "User with this email already exists");
 
-    const existingUser = await UserModel.findOne({ email });
-    if (existingUser) {
-      throw new ApiError(409, "User with this email already exists", [
-        "Email already in use",
-      ]);
-    }
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const newUser = await UserModel.create({ name, email, password: hashedPassword });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+  // Generate email verification token
+  const verifyToken = jwt.sign({ id: newUser._id }, process.env.EMAIL_VERIFY_SECRET, { expiresIn: "1h" });
+  const verifyEmailUrl = `${process.env.FRONTEND_URL}/verify-email?token=${verifyToken}`;
 
-    const newUser = await UserModel.create({
-      name,
-      email,
-      password: hashedPassword,
-      isVerified: false,
-    });
+  await sendEmail({ to: email, subject: "Verify your email - Binkeyit", html: verifyEmailTemplate({ name, url: verifyEmailUrl }) });
 
-    const verifyEmailUrl = `${process.env.FRONTEND_URL}/verify-email?user=${newUser._id}`;
-    const emailSent = await sendEmail({
-      to: email,
-      subject: "Verify your email - Binkeyit",
-      html: verifyEmailTemplate({ name, url: verifyEmailUrl }),
-    });
+  res.status(201).json(new ApiResponse(201, { user: { id: newUser._id, name: newUser.name, email: newUser.email } }, "User registered successfully. Please verify your email."));
+});
 
-    if (!emailSent) {
-      throw new ApiError(500, "Failed to send verification email");
-    }
+// VERIFY EMAIL
+export const verifyEmailController = asyncHandler(async (req, res) => {
+  const { token } = req.query;
+  if (!token) throw new ApiError(400, "Verification token missing");
 
-    return res.status(201).json({
-      message: "User registered successfully. Please verify your email.",
-      user: {
-        id: newUser._id,
-        name: newUser.name,
-        email: newUser.email,
-      },
-      success: true,
-      error: false,
-    });
-  } catch (error) {
-    const apiError =
-      error instanceof ApiError
-        ? error
-        : new ApiError(
-            500,
-            error.message || "Something went wrong",
-            error.stack
-          );
+  let decoded;
+  try { decoded = jwt.verify(token, process.env.EMAIL_VERIFY_SECRET); }
+  catch { throw new ApiError(400, "Invalid or expired token"); }
 
-    return res.status(apiError.statusCode).json({
-      success: false,
-      message: apiError.message,
-      errors: apiError.errors || null,
-    });
-  }
-}
+  const user = await UserModel.findById(decoded.id);
+  if (!user) throw new ApiError(404, "User not found");
+  if (user.isVerified) return res.status(200).json(new ApiResponse(200, null, "Email already verified"));
 
-// ---------------------- VERIFY EMAIL ----------------------
-export async function verifyEmailController(req, res) {
-  try {
-    const { userId } = req.body; // pass userId or token from frontend
-    const user = await UserModel.findById(userId);
+  user.isVerified = true;
+  await user.save();
+  res.status(200).json(new ApiResponse(200, null, "Email verified successfully"));
+});
 
-    if (!user) {
-      throw new ApiError(404, "User not found");
-    }
+// LOGIN
+export const loginController = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) throw new ApiError(400, "Email and password are required");
 
-    if (user.isVerified) {
-      return res.status(200).json({
-        message: "Email already verified",
-        success: true,
-        error: false,
-      });
-    }
+  const user = await UserModel.findOne({ email });
+  if (!user) throw new ApiError(404, "User not found");
+  if (user.status !== "active") throw new ApiError(403, "Please contact Admin");
 
-    user.isVerified = true;
-    await user.save();
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) throw new ApiError(401, "Invalid email or password");
 
-    return res.status(200).json({
-      message: "Email verified successfully",
-      success: true,
-      error: false,
-    });
-  } catch (error) {
-    const apiError =
-      error instanceof ApiError
-        ? error
-        : new ApiError(
-            500,
-            error.message || "Something went wrong",
-            error.stack
-          );
+  const accessToken = generateAccessToken(user._id);
+  const refreshToken = generateRefreshToken(user._id);
 
-    return res.status(apiError.statusCode).json({
-      success: false,
-      message: apiError.message,
-      errors: apiError.errors || null,
-    });
-  }
-}
+  user.refreshToken = refreshToken;
+  await user.save();
 
-// ---------------------- LOGIN ----------------------
+  res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "Strict" });
+  res.status(200).json(new ApiResponse(200, { user: { id: user._id, name: user.name, email: user.email }, tokens: { accessToken } }, "Login successful"));
+});
 
-export async function loginController(req, res) {
-  try {
-    const { email, password } = req.body;
+// LOGOUT
+export const logoutController = asyncHandler(async (req, res) => {
+  if (req.user) await UserModel.findByIdAndUpdate(req.user._id, { refreshToken: null });
 
-    if (!email || !password) {
-      throw new ApiError(400, "Email and password are required");
-    }
-
-    const user = await UserModel.findOne({ email });
-    if (!user) {
-      throw new ApiError(404, "User not found");
-    }
-
-    if (user.status !== "active") {
-      throw new ApiError(403, "Please contact Admin.");
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      throw new ApiError(401, "Invalid email or password");
-    }
-
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    res.cookiesOption = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Strict",
-    };
-
-    res.cookie("accessToken", accessToken, res.cookiesOption);
-    res.cookie("refreshToken", refreshToken, res.cookiesOption);
-
-    return res.status(200).json({
-      message: "Login successful",
-      success: true,
-      error: false,
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-        },
-        tokens: {
-          accessToken,
-          refreshToken,
-        },
-      },
-    });
-  } catch (error) {
-    const apiError =
-      error instanceof ApiError
-        ? error
-        : new ApiError(
-            500,
-            error.message || "Something went wrong",
-            error.stack
-          );
-
-    return res.status(apiError.statusCode).json({
-      success: false,
-      message: apiError.message,
-      errors: apiError.errors || null,
-    });
-  }
-}
+  res.clearCookie("refreshToken", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "Strict" });
+  res.status(200).json(new ApiResponse(200, null, "Logout successful"));
+});
