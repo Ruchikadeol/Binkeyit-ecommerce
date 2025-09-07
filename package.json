@@ -1,0 +1,20 @@
+{
+  "name": "binkeyit-ecommerce",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "server": "cd server && nodemon index.js",
+    "client": "cd client && npm run dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ruchikadeol/Binkeyit-ecommerce.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Ruchikadeol/Binkeyit-ecommerce/issues"
+  },
+  "homepage": "https://github.com/Ruchikadeol/Binkeyit-ecommerce#readme"
+}

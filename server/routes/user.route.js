@@ -9,6 +9,8 @@ import {
   sendForgotPasswordOTPController,
   verifyForgotPasswordOTPController,
   resetPasswordController,
+  refreshAccessTokenController,
+  changePasswordController,
 } from "../controllers/user.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.js";
@@ -26,6 +28,8 @@ userRouter.post("/logout", verifyJWT, logoutController);
 userRouter.get("/profile", verifyJWT, (req, res) => {
   res.json({ success: true, user: req.user });
 });
+userRouter.post("/refresh-token", refreshAccessTokenController);
+userRouter.patch("/change-password", verifyJWT, changePasswordController);
 
 // Update user details + optional avatar
 userRouter.put(
