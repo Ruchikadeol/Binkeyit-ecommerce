@@ -1,14 +1,19 @@
-import React from 'react'
-import './App.css'
-
+import React from "react";
+import { Outlet } from "react-router-dom";
+import "./App.css";
+import "./index.css";
+import Header from "./components/Header.jsx";
+import Footer from "./components/Footer.jsx";
 function App() {
-
-
   return (
-    <main className="App" >
-     Binkeyit
-    </main>
-  )
+    <>
+      <Header />
+      <main>
+        <Outlet />
+      </main>
+      <Footer />
+    </>
+  );
 }
 
-export default App
+export default App;

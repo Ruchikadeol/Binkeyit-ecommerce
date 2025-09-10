@@ -1,11 +1,22 @@
 {
   "name": "binkeyit-ecommerce",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "server": "cd server && nodemon index.js",
-    "client": "cd client && npm run dev"
+    "server": "npm run dev --workspace server",
+    "client": "npm run dev --workspace client",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.0.0",
+    "eslint": "^9.33.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.13"
   },
   "repository": {
     "type": "git",
@@ -16,5 +27,8 @@
   "bugs": {
     "url": "https://github.com/Ruchikadeol/Binkeyit-ecommerce/issues"
   },
-  "homepage": "https://github.com/Ruchikadeol/Binkeyit-ecommerce#readme"
+  "homepage": "https://github.com/Ruchikadeol/Binkeyit-ecommerce#readme",
+  "dependencies": {
+    "react-icons": "^5.5.0"
+  }
 }
